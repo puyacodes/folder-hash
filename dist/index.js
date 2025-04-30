@@ -1,9 +1,175 @@
 'use strict';
 
-const { isSomeString, isString, isBool, isFunction, isObject, isSomeArray } = require("@locustjs/base");
-const fs = require("fs");
-const path = require("path");
-const crypto = require('crypto');
+var base = require('@locustjs/base');
+var fs = require('fs');
+var path = require('path');
+var crypto = require('crypto');
+
+const FolderNavigationEvent = {
+    onFolderNavigating: 0,
+    onSubFolderNavigating: 1,
+    onFileNavigating: 2,
+    onFolderNavigated: 3,
+    onFolderIgnored: 4,
+    onFileIgnored: 5
+};
+class FolderNavigator {
+    constructor(config) {
+        this.config = Object.assign({
+            excludeDirs: '',
+            excludeFiles: '',
+            includeDirs: '',
+            includeFiles: '',
+            sort: true
+        }, config);
+
+        if (!base.isString(this.config.excludeDirs)) {
+            this.config.excludeDirs = [];
+        } else {
+            this.config.excludeDirs = this.config.excludeDirs.split(",").filter(base.isSomeString);
+        }
+
+        if (base.isSomeString(this.config.includeDirs) && this.config.excludeDirs.length) {
+            this.config.includeDirs.split(",").forEach(dir => {
+                const index = this.config.excludeDirs.findIndex(x => x.toLowerCase() == dir.toLowerCase());
+                if (index >= 0) {
+                    this.config.excludeDirs.splice(index, 1);
+                }
+            });
+        }
+
+        if (!base.isString(this.config.excludeFiles)) {
+            this.config.excludeFiles = [];
+        } else {
+            this.config.excludeFiles = this.config.excludeFiles.split(",").filter(base.isSomeString);
+        }
+
+        if (!base.isString(this.config.includeFiles)) {
+            this.config.includeFiles = [];
+        } else {
+            this.config.includeFiles = this.config.includeFiles.split(",").filter(base.isSomeString);
+        }
+    }
+    _isExcludedFile(file) {
+        let result = false;
+        const ext = path.parse(file).ext;
+
+        if (this.config.excludeFiles.length) {
+            if (
+                this.config.excludeFiles.contains(file) ||
+                (
+                    ext && this.config.excludeFiles.contains(`*${ext}`)
+                )
+            ) {
+                if (this.config.includeFiles.length) {
+                    result = !this.config.includeFiles.contains(file);
+                } else {
+                    result = true;
+                }
+            }
+        }
+
+        return result;
+    }
+    async _navigate(node, dir, callback, level = 0) {
+        if (fs.existsSync(dir)) {
+            const stat = fs.statSync(dir);
+
+            if (stat && stat.isDirectory()) {
+                node.name = level == 0 ? "" : path.parse(dir).base;
+
+                let r = await callback({ name: node.name, fullPath: dir, dir: true, level, state: FolderNavigationEvent.onFolderNavigating, node });
+
+                if (base.isObject(r)) {
+                    for (let key of Object.keys(r)) {
+                        node[key] = r[key];
+                    }
+                }
+
+                let list = fs.readdirSync(dir);
+
+                if (this.config.sort) {
+                    list.sort();
+                }
+
+                for (let i = 0; i < list.length; i++) {
+                    const file = list[i];
+
+                    const fullPath = path.join(dir, file);
+                    const stat = fs.statSync(fullPath);
+
+                    if (stat && stat.isDirectory()) {
+                        if (this.config.excludeDirs.contains(file)) {
+                            await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onFolderIgnored, node });
+                        } else {
+                            const r = await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onSubFolderNavigating, node });
+
+                            if (r === undefined || (base.isBool(r) && r)) {
+                                if (!node.dirs) {
+                                    node.dirs = [];
+                                }
+
+                                const subdir = {};
+
+                                await this._navigate(subdir, fullPath, callback, level + 1);
+
+                                node.dirs.push(subdir);
+                            }
+                        }
+                    } else {
+                        if (this._isExcludedFile(file)) {
+                            await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileIgnored, node });
+                        } else {
+                            const r = await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileNavigating, node });
+
+                            if (r === undefined || (base.isBool(r) && r)) {
+                                if (!node.files) {
+                                    node.files = [];
+                                }
+
+                                node.files.push(file);
+                            } else if (r !== undefined && r && !base.isBool(r)) {
+                                if (!node.files) {
+                                    node.files = [];
+                                }
+
+                                node.files.push(r);
+                            }
+                        }
+                    }
+                }
+
+                r = await callback({ name: node.name, dir: true, level, state: FolderNavigationEvent.onFolderNavigated, node });
+
+                if (base.isObject(r)) {
+                    for (let key of Object.keys(r)) {
+                        node[key] = r[key];
+                    }
+                }
+            }
+        }
+    }
+    async navigate(dir, callback) {
+        const result = {};
+
+        if (this.config.debugMode) {
+            console.log(this.config);
+        }
+
+        if (!path.isAbsolute(dir)) {
+            dir = path.join(process.cwd(), dir);
+        }
+
+        if (!base.isFunction(callback)) {
+            callback = () => { };
+        }
+
+        await this._navigate(result, dir, callback);
+
+        return result;
+    }
+
+}
 
 function getFileMd5(filePath) {
     return new Promise((resolve, reject) => {
@@ -28,123 +194,103 @@ function getMd5(input) {
     return crypto.createHash('md5').update(input).digest('hex');
 }
 
-class FolderNavigator {
-    constructor(config) {
-        this.config = Object.assign({
-            excludeDirs: '',
-            excludeFiles: ''
-        }, config);
+const FolderChangeType = {
+    MissingSubDir: 'missing-subdir',
+    MissingFiles: 'missing-files',
+    FileMismatch: 'file-mismatch',
+    MissingFile: 'missing-file'
+};
 
-        if (!isString(this.config.excludeDirs)) {
-            this.config.excludeDirs = [];
+async function copyDirectory(source, destination) {
+    await fs.promises.mkdir(destination, { recursive: true }); // Create the destination folder if it doesn't exist
+
+    const items = await fs.promises.readdir(source, { withFileTypes: true }); // Read the source directory
+
+    for (const item of items) {
+        const sourcePath = path.join(source, item.name);
+        const destinationPath = path.join(destination, item.name);
+
+        if (item.isDirectory()) {
+            // If it's a folder, recursively copy its contents
+            await copyDirectory(sourcePath, destinationPath);
         } else {
-            this.config.excludeDirs = this.config.excludeDirs.split(",").filter(isSomeString);
-        }
-
-        if (!isString(this.config.excludeFiles)) {
-            this.config.excludeFiles = [];
-        } else {
-            this.config.excludeFiles = this.config.excludeFiles.split(",").filter(isSomeString);
+            // If it's a file, copy it
+            await fs.promises.copyFile(sourcePath, destinationPath);
         }
     }
-    async _navigate(result, dir, callback, level = 0) {
-        if (fs.existsSync(dir)) {
-            const stat = fs.statSync(dir);
+}
 
-            if (stat && stat.isDirectory()) {
-                result.name = level == 0 ? "" : path.parse(dir).base;
+async function copyFiles(source, destination) {
+    await fs.promises.mkdir(destination, { recursive: true }); // Create the destination folder if it doesn't exist
 
-                let r = await callback({ name: result.name, fullPath: dir, dir: true, level, state: 0, node: result });
+    const files = await fs.promises.readdir(source); // Read all items in the source directory
 
-                if (isObject(r)) {
-                    for (let key of Object.keys(r)) {
-                        result[key] = r[key];
-                    }
-                }
+    for (const file of files) {
+        const sourcePath = path.join(source, file);
+        const destinationPath = path.join(destination, file);
+        const stats = await fs.promises.lstat(sourcePath);
 
-                let list = fs.readdirSync(dir);
-
-                list.sort();
-
-                for (let i = 0; i < list.length; i++) {
-                    const file = list[i];
-
-                    const fullPath = path.join(dir, file);
-                    const stat = fs.statSync(fullPath);
-
-                    if (stat && stat.isDirectory()) {
-                        if (!this.config.excludeDirs.includes(file)) {
-                            const r = await callback({ name: file, fullPath, dir: true, stat, level, state: 1, node: result });
-
-                            if (r === undefined || (isBool(r) && r)) {
-                                if (!result.dirs) {
-                                    result.dirs = [];
-                                }
-
-                                const subdir = {};
-
-                                await this._navigate(subdir, fullPath, callback, level + 1);
-
-                                result.dirs.push(subdir);
-                            }
-                        }
-                    } else {
-                        if (!(this.config.excludeFiles.includes(file) || this.config.excludeFiles.includes(`*${path.parse(file).ext}`))) {
-                            const r = await callback({ name: file, fullPath, dir: false, stat, level, state: 2, node: result });
-
-                            if (r === undefined || (isBool(r) && r)) {
-                                if (!result.files) {
-                                    result.files = [];
-                                }
-
-                                result.files.push(file);
-                            } else if (r !== undefined && r && !isBool(r)) {
-                                if (!result.files) {
-                                    result.files = [];
-                                }
-
-                                result.files.push(r);
-                            }
-                        }
-                    }
-                }
-
-                r = await callback({ name: result.name, dir: true, level, state: 3, node: result });
-
-                if (isObject(r)) {
-                    for (let key of Object.keys(r)) {
-                        result[key] = r[key];
-                    }
-                }
-            }
+        if (stats.isFile()) {
+            // If it's a file, copy it
+            await fs.promises.copyFile(sourcePath, destinationPath);
         }
     }
-    async navigate(dir, callback) {
-        const result = {};
+}
 
-        if (!path.isAbsolute(dir)) {
-            dir = path.join(process.cwd(), dir);
-        }
+function copyFileWithDirs(source, destination) {
+    const dir = path.dirname(destination);
 
-        if (!isFunction(callback)) {
-            callback = () => { };
-        }
-
-        await this._navigate(result, dir, callback);
-
-        return result;
-    }
-
+    fs.mkdirSync(dir, { recursive: true }); // Create directory structure
+    fs.copyFileSync(source, destination);  // Copy the file
 }
 
 class FolderUtil {
-    static async getHash(dir, onProgress) {
-        const fn = new FolderNavigator({
-            excludeDirs: 'node_modules,.git,tests,packages,wwwroot'
-        });
-        if (!isFunction(onProgress)) {
+    static excludeDirs = 'node_modules,.git,tests,packages,wwwroot,__tests__,coverage,.vscode,.idea,build,publish,.vs';
+    static excludeFiles = 'thumbs.db,package.json,packages.config,.env,.gitignore,.ds_store,*.log,*.test.js,*.spec.js,*.bak,*.tmp,sync.bat,sync.sh';
+
+    static _getConfig(options) {
+        const config = {
+            excludeDirs: FolderUtil.excludeDirs,
+            excludeFiles: FolderUtil.excludeFiles
+        };
+
+        if (base.isObject(options)) {
+            if (base.isSomeString(options.excludeDirs)) {
+                if (options.excludeDirs.startsWith(",")) {
+                    config.excludeDirs += options.excludeDirs;
+                } else {
+                    config.excludeDirs = options.excludeDirs;
+                }
+            }
+            if (base.isSomeString(options.excludeFiles)) {
+                if (options.excludeFiles.startsWith(",")) {
+                    config.excludeFiles += options.excludeFiles;
+                } else {
+                    config.excludeFiles = options.excludeFiles;
+                }
+            }
+            if (base.isSomeString(options.includeDirs)) {
+                config.includeDirs = options.includeDirs;
+            }
+            if (base.isSomeString(options.includeFiles)) {
+                config.includeFiles = options.includeFiles;
+            }
+        } else {
+            options = {};
+        }
+
+        config.sort = options.sort;
+        config.debugMode = options.debugMode;
+
+        return config;
+    }
+    static async getHash(dir, onProgress, options) {
+        const fn = new FolderNavigator(FolderUtil._getConfig(options));
+
+        if (!base.isFunction(onProgress)) {
             onProgress = () => { };
         }
+
         const callback = async (args) => {
             onProgress(args);
 
@@ -154,7 +300,7 @@ class FolderUtil {
                 return { name, hash: await getFileMd5(fullPath) }
             }
 
-            if (state == 3) {
+            if (state == FolderNavigationEvent.onFolderNavigated) {
                 let hashes = [];
 
                 if (node.dirs && node.dirs.length) {
@@ -176,82 +322,254 @@ class FolderUtil {
 
         return result;
     }
-    static async diff(dir1, dir2) {
-
-    }
-    static async syncFrom(fromDir, toDir, relTo) {
+    static async diff(fromDir, toDir, fromRel, toRel, options) {
         let jsonFrom, jsonTo;
 
-        if (isString(fromDir)) {
-            jsonFrom = await FolderUtil.getHash(fromDir);
-        } else if (isObject(fromDir)) {
+        if (!base.isString(fromRel)) {
+            fromRel = ".";
+        }
+
+        if (base.isString(fromDir)) {
+            if (fs.existsSync(fromDir)) {
+                const stat = fs.statSync(fromDir);
+
+                if (!stat.isDirectory()) {
+                    try {
+                        jsonFrom = JSON.parse(fs.readFileSync(fromDir, "utf-8"));
+                    } catch (e) {
+                        throw `Reading 'from' file failed.\n${e}`
+                    }
+                } else {
+                    jsonFrom = await FolderUtil.getHash(fromDir, null, options);
+                }
+            } else {
+                throw `'from' not found`
+            }
+        } else if (base.isObject(fromDir)) {
             jsonFrom = fromDir;
         } else {
-            throw `Invalid dir 1`
+            throw `Invalid 'from'`
         }
 
-        if (isString(toDir)) {
-            jsonTo = await FolderUtil.getHash(toDir);
-            relTo = !isSomeString(relTo) ? path.parse(toDir).dir: relTo;
-        } else if (isObject(toDir)) {
+        if (base.isString(toDir)) {
+            if (fs.existsSync(toDir)) {
+                const stat = fs.statSync(toDir);
+
+                if (!stat.isDirectory()) {
+                    try {
+                        jsonTo = JSON.parse(fs.readFileSync(toDir, "utf-8"));
+                    } catch (e) {
+                        throw `Reading 'to' file failed.\n${e}`
+                    }
+
+                    toRel = !base.isSomeString(toRel) ? path.parse(toDir).dir : toRel;
+                } else {
+                    jsonTo = await FolderUtil.getHash(toDir, null, options);
+                    toRel = !base.isSomeString(toRel) ? path.parse(toDir).dir : toRel;
+                }
+            } else {
+                throw `'to' not found`
+            }
+        } else if (base.isObject(toDir)) {
             jsonTo = toDir;
 
-            if (!isSomeString(relTo)) {
-                throw `target relative path required`
+            if (!base.isSomeString(toRel)) {
+                throw `target path required`
             }
         } else {
-            throw `Invalid dir 2`
+            throw `Invalid 'to'`
         }
-        
+
         let changes = [];
 
+        if (!base.isFunction(options.onChange)) {
+            options.onChange = () => { };
+        }
+
         function checkDir(from, to, relFrom, relTo) {
-            const _relFrom = relFrom + (from.name ? "\\" + from.name: "");
-            const _relTo = relTo + (to.name ? "\\" + to.name: "");
+            if (from.hash != to.hash) { // the two folders match. no need to check them
+                const _relFrom = relFrom + (from.name ? "/" + from.name : "");
+                const _relTo = relTo + (to.name ? "/" + to.name : "");
 
-            if (isSomeArray(from.dirs)) {
-                if (isSomeArray(to.dirs)) {
-                    for (let subdirFrom of from.dirs) {
-                        const subdirTo = to.dirs.find(d => d.name.toLowerCase() == subdirFrom.name.toLowerCase());
+                if (base.isSomeArray(from.dirs)) {
+                    const toSubDirs = base.isSomeArray(to.dirs) ? to.dirs : [];
 
-                        if (subdirTo) {
-                            checkDir(subdirFrom, subdirTo, _relFrom, _relTo);
-                        } else {
-                            changes.push(`xcopy "${_relFrom}\\${subdirFrom.name}" "${_relTo}" /S/Q/Y`);
+                    if (base.isSomeArray(to.dirs)) {
+                        for (let subdirFrom of from.dirs) {
+                            const subdirTo = toSubDirs.find(d => d.name.toLowerCase() == subdirFrom.name.toLowerCase());
+
+                            if (subdirTo) {
+                                checkDir(subdirFrom, subdirTo, _relFrom, _relTo);
+                            } else {
+                                const change = { from: `${_relFrom}/${subdirFrom.name}`, to: `${_relTo}/${subdirFrom.name}`, dir: true };
+
+                                options.onChange({ path: change.to, name: subdirFrom.name, type: FolderChangeType.MissingSubDir });
+
+                                changes.push(change);
+                            }
                         }
                     }
-                } else {
-                    changes.push(`xcopy "${_relFrom}" "${_relTo}" /S/Q/Y`);
                 }
-            }
 
-            if (isSomeArray(from.files)) {
-                if (!isSomeArray(to.files)) {
-                    changes.push(`xcopy "${_relFrom}\\*.*" "${_relTo}\\" /Q/Y`);
-                } else {
-                    for (let fileFrom of from.files) {
-                        const fileTo = to.files.find(d => d.name.toLowerCase() == fileFrom.name.toLowerCase());
+                if (base.isSomeArray(from.files)) {
+                    if (!base.isSomeArray(to.files)) {
+                        const change = { from: `${_relFrom}`, to: `${_relTo}/`, all: true };
 
-                        if (fileTo) {
-                            if (fileFrom.hash != fileTo.hash) {
-                                changes.push(`xcopy "${_relFrom}\\${fileFrom.name}" "${relTo}${to.name}\\" /Q/Y`);
+                        options.onChange({ path: change.to, name: from.name, type: FolderChangeType.MissingFiles });
 
-                                console.log(`${_relTo} contains ${fileFrom.name}, but it differs\n\tfrom: ${fileFrom.hash}, to: ${fileTo.hash}`);
+                        changes.push(change);
+                    } else {
+                        for (let fileFrom of from.files) {
+                            const fileTo = to.files.find(d => d.name.toLowerCase() == fileFrom.name.toLowerCase());
+
+                            if (fileTo) {
+                                if (fileFrom.hash != fileTo.hash) {
+                                    const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${_relTo}/${fileFrom.name}` };
+
+                                    options.onChange({ path: change.to, name: fileFrom.name, type: FolderChangeType.FileMismatch });
+
+                                    changes.push(change);
+                                }
+                            } else {
+                                const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${_relTo}/${fileFrom.name}` };
+
+                                options.onChange({ path: change.to, name: fileFrom.name, type: FolderChangeType.MissingFile });
+
+                                changes.push(change);
                             }
-                        } else {
-                            changes.push(`xcopy "${_relFrom}\\${fileFrom.name}" "${relTo}${to.name}\\" /Q/Y`);
-                            console.log(`${_relTo} misses ${fileFrom.name}`);
                         }
                     }
                 }
             }
         }
 
-        checkDir(jsonFrom, jsonTo, '.', relTo);
+        checkDir(jsonFrom, jsonTo, fromRel, toRel);
+
+        return changes;
+    }
+    static async apply(fromDir, toDir, relFrom, relTo, options) {
+        const changes = await FolderUtil.diff(fromDir, toDir, relFrom, relTo, options);
+
+        for (let change of changes) {
+            if (change.dir) {
+                await copyDirectory(change.from, change.to);
+            } else if (change.all) {
+                await copyFiles(change.from, change.to);
+            } else {
+                copyFileWithDirs(change.from, change.to);
+            }
+        }
 
         return changes;
     }
 }
 
+function containsAll(str, ...args) {
+    let result = false;
+
+    if (base.isSomeString(str)) {
+        if (args.length) {
+            result = true;
+
+            const _str = str.toLowerCase();
+
+            for (let arg of args) {
+                const value = base.isNullOrUndefined(arg) ? "" : arg.toString().toLowerCase();
+
+                if (!_str.includes(value)) {
+                    result = false;
+                    break;
+                }
+            }
+        } else {
+            result = true;
+        }
+    }
+
+    return result;
+}
+
+function containsAny(str, ...args) {
+    let result = true;
+
+    if (base.isSomeString(str) && args.length) {
+        result = false;
+
+        const _str = str.toLowerCase();
+
+        for (let arg of args) {
+            const value = base.isNullOrUndefined(arg) ? "" : arg.toString().toLowerCase();
+
+            if (_str.includes(value)) {
+                result = true;
+                break;
+            }
+        }
+    }
+
+    return result;
+}
+
+// --------------------------------------------
+//              String extensions
+// --------------------------------------------
+
+if (String.prototype.contains === undefined) {
+    String.prototype.contains = function (...args) {
+        return containsAll(this, ...args);
+    };
+}
+
+if (String.prototype.containsAll === undefined) {
+    String.prototype.containsAll = function (...args) {
+        return containsAll(this, ...args);
+    };
+}
+
+if (String.prototype.containsAny === undefined) {
+    String.prototype.containsAny = function (...args) {
+        return containsAny(this, ...args);
+    };
+}
+
+// --------------------------------------------
+//              Array extensions
+// --------------------------------------------
+
+if (Array.prototype.contains === undefined) {
+    Array.prototype.contains = function (arg) {
+        let result = false;
+
+        for (let item of this) {
+            if ((item || "").toString().contains(arg)) {
+                result = true;
+                break;
+            }
+        }
+
+        return result;
+    };
+}
+
+function equals(str1, str2, ignoreCase = true) {
+    let result = false;
+
+    if (base.isString(str1) && base.isString(str2)) {
+        result = ignoreCase ? str1.toLowerCase() == str2.toLowerCase(): str1 == str2;
+    } else {
+        result = base.isNullOrEmpty(str1) && base.isNullOrEmpty(str2);
+    }
+
+    return result;
+}
+
+if (String.prototype.equals === undefined) {
+    String.prototype.equals = function (...args) {
+        return equals(this, ...args);
+    };
+}
+
+exports.FolderChangeType = FolderChangeType;
+exports.FolderNavigationEvent = FolderNavigationEvent;
 exports.FolderNavigator = FolderNavigator;
 exports.FolderUtil = FolderUtil;

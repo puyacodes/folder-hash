@@ -1,5 +1,5 @@
-import FolderNavigator from './FolderNavigator'
-import FolderUtil from './FolderUtil'
+import { FolderNavigator, FolderNavigationEvent } from './FolderNavigator'
+import { FolderUtil, FolderChangeType } from './FolderUtil'
 import "./extensions";
 
-export { FolderUtil, FolderNavigator }
+export { FolderUtil, FolderChangeType, FolderNavigator, FolderNavigationEvent }

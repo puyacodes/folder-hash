@@ -6,7 +6,9 @@ const FolderNavigationEvent = {
     onFolderNavigating: 0,
     onSubFolderNavigating: 1,
     onFileNavigating: 2,
-    onFolderNavigated: 3
+    onFolderNavigated: 3,
+    onFolderIgnored: 4,
+    onFileIgnored: 5
 }
 class FolderNavigator {
     constructor(config) {
@@ -47,12 +49,14 @@ class FolderNavigator {
     }
     _isExcludedFile(file) {
         let result = false;
+        const ext = path.parse(file).ext
 
         if (this.config.excludeFiles.length) {
             if (
                 this.config.excludeFiles.contains(file) ||
-                this.config.excludeFiles.contains(`*${path.parse(file).ext}`) ||
-                this.config.excludeFiles.contains(`${path.parse(file).ext}`)
+                (
+                    ext && this.config.excludeFiles.contains(`*${ext}`)
+                )
             ) {
                 if (this.config.includeFiles.length) {
                     result = !this.config.includeFiles.contains(file)
@@ -92,7 +96,9 @@ class FolderNavigator {
                     const stat = fs.statSync(fullPath);
 
                     if (stat && stat.isDirectory()) {
-                        if (!this.config.excludeDirs.contains(file)) {
+                        if (this.config.excludeDirs.contains(file)) {
+                            await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onFolderIgnored, node });
+                        } else {
                             const r = await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onSubFolderNavigating, node });
 
                             if (r === undefined || (isBool(r) && r)) {
@@ -108,7 +114,9 @@ class FolderNavigator {
                             }
                         }
                     } else {
-                        if (!this._isExcludedFile(file)) {
+                        if (this._isExcludedFile(file)) {
+                            await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileIgnored, node });
+                        } else {
                             const r = await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileNavigating, node });
 
                             if (r === undefined || (isBool(r) && r)) {
@@ -140,6 +148,10 @@ class FolderNavigator {
     }
     async navigate(dir, callback) {
         const result = {}
+
+        if (this.config.debugMode) {
+            console.log(this.config)
+        }
 
         if (!path.isAbsolute(dir)) {
             dir = path.join(process.cwd(), dir)

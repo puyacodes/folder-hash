@@ -21,6 +21,8 @@
     "description": "folder-hash is a cli tool that generates a hash for a folder, based on the files in it.",
     "dependencies": {
         "@locustjs/base": "^4.4.1",
+        "@locustjs/exception": "^2.3.0",
+        "chalk": "^4.1.2",
         "crypto": "^1.0.1"
     },
     "devDependencies": {

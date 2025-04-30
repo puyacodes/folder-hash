@@ -5,6 +5,13 @@ import getFileMd5 from "./getFileMD5";
 import getMd5 from "./getMd5";
 import { FolderNavigator, FolderNavigationEvent } from "./FolderNavigator";
 
+const FolderChangeType = {
+    MissingSubDir: 'missing-subdir',
+    MissingFiles: 'missing-files',
+    FileMismatch: 'file-mismatch',
+    MissingFile: 'missing-file'
+}
+
 async function copyDirectory(source, destination) {
     await fs.promises.mkdir(destination, { recursive: true }); // Create the destination folder if it doesn't exist
 
@@ -41,9 +48,16 @@ async function copyFiles(source, destination) {
     }
 }
 
+function copyFileWithDirs(source, destination) {
+    const dir = path.dirname(destination);
+
+    fs.mkdirSync(dir, { recursive: true }); // Create directory structure
+    fs.copyFileSync(source, destination);  // Copy the file
+}
+
 class FolderUtil {
     static excludeDirs = 'node_modules,.git,tests,packages,wwwroot,__tests__,coverage,.vscode,.idea,build,publish,.vs';
-    static excludeFiles = 'thumbs.db,package.json,.env,.gitignore,.ds_store,*.log,*.test.js,*.spec.js,*.bak,*.tmp';
+    static excludeFiles = 'thumbs.db,package.json,packages.config,.env,.gitignore,.ds_store,*.log,*.test.js,*.spec.js,*.bak,*.tmp,sync.bat,sync.sh';
 
     static _getConfig(options) {
         const config = {
@@ -77,6 +91,7 @@ class FolderUtil {
         }
 
         config.sort = options.sort;
+        config.debugMode = options.debugMode;
 
         return config;
     }
@@ -118,8 +133,12 @@ class FolderUtil {
 
         return result;
     }
-    static async diff(fromDir, toDir, target, options) {
+    static async diff(fromDir, toDir, fromRel, toRel, options) {
         let jsonFrom, jsonTo;
+
+        if (!isString(fromRel)) {
+            fromRel = ".";
+        }
 
         if (isString(fromDir)) {
             if (fs.existsSync(fromDir)) {
@@ -154,12 +173,10 @@ class FolderUtil {
                         throw `Reading 'to' file failed.\n${e}`
                     }
 
-                    if (!isSomeString(target)) {
-                        throw `target path required`
-                    }
+                    toRel = !isSomeString(toRel) ? path.parse(toDir).dir : toRel;
                 } else {
                     jsonTo = await FolderUtil.getHash(toDir, null, options);
-                    target = !isSomeString(target) ? path.parse(toDir).dir : target;
+                    toRel = !isSomeString(toRel) ? path.parse(toDir).dir : toRel;
                 }
             } else {
                 throw `'to' not found`
@@ -167,7 +184,7 @@ class FolderUtil {
         } else if (isObject(toDir)) {
             jsonTo = toDir;
 
-            if (!isSomeString(target)) {
+            if (!isSomeString(toRel)) {
                 throw `target path required`
             }
         } else {
@@ -195,9 +212,9 @@ class FolderUtil {
                             if (subdirTo) {
                                 checkDir(subdirFrom, subdirTo, _relFrom, _relTo);
                             } else {
-                                const change = { from: `${_relFrom}/${subdirFrom.name}`, to: `${_relTo}`, dir: true }
+                                const change = { from: `${_relFrom}/${subdirFrom.name}`, to: `${_relTo}/${subdirFrom.name}`, dir: true }
 
-                                options.onChange({ path: change.to, name: subdirFrom.name, type: 'missing-subdir' });
+                                options.onChange({ path: change.to, name: subdirFrom.name, type: FolderChangeType.MissingSubDir });
 
                                 changes.push(change);
                             }
@@ -209,7 +226,7 @@ class FolderUtil {
                     if (!isSomeArray(to.files)) {
                         const change = { from: `${_relFrom}`, to: `${_relTo}/`, all: true }
 
-                        options.onChange({ path: change.to, name: from.name, type: 'missing-files' });
+                        options.onChange({ path: change.to, name: from.name, type: FolderChangeType.MissingFiles });
 
                         changes.push(change)
                     } else {
@@ -218,16 +235,16 @@ class FolderUtil {
 
                             if (fileTo) {
                                 if (fileFrom.hash != fileTo.hash) {
-                                    const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${relTo}/${fileFrom.name}` }
+                                    const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${_relTo}/${fileFrom.name}` }
 
-                                    options.onChange({ path: change.to, name: fileFrom.name, type: 'file-mismatch' });
+                                    options.onChange({ path: change.to, name: fileFrom.name, type: FolderChangeType.FileMismatch });
 
                                     changes.push(change);
                                 }
                             } else {
-                                const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${relTo}/${fileFrom.name}` }
+                                const change = { from: `${_relFrom}/${fileFrom.name}`, to: `${_relTo}/${fileFrom.name}` }
 
-                                options.onChange({ path: change.to, name: fileFrom.name, type: 'missing-file' });
+                                options.onChange({ path: change.to, name: fileFrom.name, type: FolderChangeType.MissingFile });
 
                                 changes.push(change)
                             }
@@ -237,12 +254,12 @@ class FolderUtil {
             }
         }
 
-        checkDir(jsonFrom, jsonTo, '.', target);
+        checkDir(jsonFrom, jsonTo, fromRel, toRel);
 
         return changes;
     }
-    static async sync(fromDir, toDir, target, options) {
-        const changes = await FolderUtil.diff(fromDir, toDir, target, options);
+    static async apply(fromDir, toDir, relFrom, relTo, options) {
+        const changes = await FolderUtil.diff(fromDir, toDir, relFrom, relTo, options);
 
         for (let change of changes) {
             if (change.dir) {
@@ -250,10 +267,12 @@ class FolderUtil {
             } else if (change.all) {
                 await copyFiles(change.from, change.to);
             } else {
-                fs.copyFileSync(change.from, change.to);
+                copyFileWithDirs(change.from, change.to);
             }
         }
+
+        return changes;
     }
 }
 
-export default FolderUtil;
+export { FolderUtil, FolderChangeType };
