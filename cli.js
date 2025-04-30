@@ -6,74 +6,97 @@ const path = require("path");
 const { Exception } = require("@locustjs/exception");
 const chalk = require("chalk");
 const os = require('os');
+const readline = require("readline");
+
 const workingDir = process.cwd();
 
+function promptUser(question, toLower = true) {
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+
+    return new Promise((resolve) => {
+        rl.question(question, (answer) => {
+            rl.close();
+
+            const result = toLower ? answer.trim().toLowerCase() : answer.trim();
+
+            resolve(result);
+        });
+    });
+}
+
 function showHelp(examples) {
-    console.log(`
-Folder Hash v${version}
-`);
+    console.log(`Folder Hash v${version}`);
+
     if (examples) {
         console.log(`
 Examples:
-${examples == "hash" || examples == "all" ? `
-    create hash
-        1. create hash for current directory
-            fh
-        2. create hash for /publish folder in current directory
-            fh hash -d publish
-        2. create hash for /publish folder as output.json
-            fh hash -d publish -o output.json
-        3. create hash for /publish folder in current directory, do not sort file/folders
-            fh hash -d publish -ns
-        4. create hash for /publish folder in current directory, quiet mode.
-            fh hash -d publish -q
-    `: ``}
-${examples == "diff" || examples == "all" ? `
-    get diff on two folders
-            1. compare ./dev to ./prod directories, report changes
+${examples == "hash" ? `
+create hash for current directory
 
-                fh diff -f ./dev -t ./prod
-                
-            2. compare dev.json to prod.json hash files, report changes
+    fh
 
-                fh diff -f dev.json -t prod.json
+create hash for /publish folder in current directory
 
-            3. compare ./dev to prod.json, report changes
+    fh hash -d ./publish
 
-                fh diff -f ./dev -t prod.json
+create hash for /publish folder as output.json
+    
+    fh hash -d ./publish -o output.json
 
-            4. compare ./dev to ./prod directories, generate cmd batch file
+create hash for /publish folder in current directory, do not sort file/folders
+    
+    fh hash -d ./publish -ns
 
-                fh diff -f ./dev -t ./prod -k cmd
+create hash for /publish folder in current directory, quiet mode
+    
+    fh hash -d ./publish -q
 
-            5. compare ./dev to ./prod directories, generate bash file named ch20250512.sh
+create hash for /publish folder in current directory, quiet mode.
+    fh hash -d publish -q`: ``}${examples == "diff" ? `
+compare ./dev to ./prod directories, report changes
 
-                fh diff -f ./dev -t ./prod -k bash -o ch20250512.sh
+    fh diff -f ./dev -t ./prod
+    
+compare dev.json to prod.json hash files, report changes
 
-            6. compare ./dev to prod.json, generate cmd batch file named ch20250512.bat
+    fh diff -f dev.json -t prod.json
 
-                fh diff -f ./dev -t prod.json -rt ./publish -k cmd -o ch20250512.bat
-    `: ``}
-${examples == "apply" || examples == "all" ? `
-    apply changes
-            1. compare ./dev to ./prod directories, apply changes from './dev' into './prod'.
+compare ./dev to prod.json, report changes
 
-                fh apply -f ./dev -t ./prod
+    fh diff -f ./dev -t prod.json
 
-            2. compare ./dev to prod.json, copy into -rt
+compare ./dev to ./prod directories, generate cmd batch file
 
-                fh apply -f ./dev -t ./prod -rt ./publish
-    `: ``}
-`);
+    fh diff -f ./dev -t ./prod -k cmd
+
+compare ./dev to ./prod directories, generate bash file named ch20250512.sh
+
+    fh diff -f ./dev -t ./prod -k bash -o ch20250512.sh
+
+compare ./dev to prod.json, generate cmd batch file named ch20250512.bat relative to './publish' dir
+
+    fh diff -f ./dev -t prod.json -rt ./publish -k cmd -o ch20250512.bat`: ``}${examples == "apply" || examples == "all" ? `
+compare ./dev to ./prod directories, apply changes from './dev' into './prod'.
+
+    fh apply -f ./dev -t ./prod
+
+compare ./dev to prod.json, copy into -rt
+
+    fh apply -f ./dev -t ./prod -rt ./publish`: ``}`);
     } else {
         console.log(`
-  Usage: fh [cmd] [args] [options]
-
+Usage: fh [cmd] [args] [options]
   cmd
         hash    create hash for the given directory (default commad)
+            args
+                -d or --dir             directory to generate hash for (default = current directory)
+                -o or --output          name of generated output file
         diff    show differences of two folder hash files or create a batch file
                 based on differences between the two specified directories
-            options
+            args
                 -f or --from            from dir
                 -t or --to              to dir
                 -rf or --relative-from  change 'from' paths relative to value of -rf 
@@ -86,16 +109,14 @@ ${examples == "apply" || examples == "all" ? `
                 if -rt is not specified, it uses 'to' dir. if 'to' dir
                     is not distinguishable, it uses current dir "./"
         apply   copy detected changes based on 'from' dir to 'to' dir into '-rt' dir
-
+            args    same as 'diff' command
             notes:  this command is best used when -rt is specified.
-                    -rf and -rt work the same as in 'diff' command.
-                    it creates directory structure by default.
-                    it overwrites existing files by default.
-                    it does not remove extra dir/files in 'to' dir that are not found in 'from' dir
-
   options:
     -? or --help            help
-    -e or --examples        show examples
+        args
+            'hash'      show help for 'hash' command
+            'diff'      show help for 'diff' command
+            'apply'     show help for 'apply' command
     -v or --version         show app version
     - q or --quiet          quiet mode. do not produce console messages.
     -dbm or --debug-mode    debug mode
@@ -105,7 +126,11 @@ ${examples == "apply" || examples == "all" ? `
     -id or --include-dirs   included directories (do not ignore specified directories)
     -if or --include-files  included files (do not ignore specified files)
     -ns or --no-sort        do not sort files/directories by name
-`);
+
+notes:    
+    directory structure is created by default.
+    existing files are overwritten by default.
+    extra folder/files in 'to' dir that are not found in 'from' dir are not removed`);
     }
 }
 
@@ -160,7 +185,13 @@ async function FolderHashCLI(args) {
 
     try {
         if (args.includes("--help") || args.includes("-?") || args.includes("/?")) {
-            showHelp(getArg("-e", "--examples", "all"));
+            showHelp(getArg("--help"));
+
+            return;
+        }
+
+        if (args.includes("--version") || args.includes("-v")) {
+            console.log(version);
 
             return;
         }
@@ -186,7 +217,18 @@ async function FolderHashCLI(args) {
 
         switch (command) {
             case 'hash':
-                dir = initPath("-d", "--dir");
+                dir = initPath("-d", "--dir", false);
+
+                if (!isSomeString(dir)) {
+                    const answer = await promptUser(`Generate hash for current directory (y/n)? `);
+
+                    if (answer == "n") {
+                        return;
+                    } else {
+                        dir = workingDir;
+                    }
+                }
+
                 output = initOutput(path.parse(dir).base + ".json");
 
                 result = await FolderUtil.getHash(dir, ({ fullPath, dir, state }) => {
@@ -194,15 +236,15 @@ async function FolderHashCLI(args) {
                         if (dir) {
                             if (state == FolderNavigationEvent.onFolderNavigating) {
                                 console.log(fullPath)
-                            } else if (state == FolderNavigationEvent.onFolderIgnored && debugMode) {
-                                console.log(chalk.yellow(`folder ignored ${fullPath}`))
+                            } else if (state == FolderNavigationEvent.onFolderIgnored) {
+                                console.log(chalk.yellow(`${fullPath}: ignored`))
                             }
                         } else {
                             if (deep) {
                                 if (state != FolderNavigationEvent.onFileIgnored) {
                                     console.log(fullPath)
-                                } else if (debugMode) {
-                                    console.log(chalk.yellow(`file ignored ${fullPath}`))
+                                } else {
+                                    console.log(chalk.yellow(`${fullPath}: ignored`))
                                 }
                             }
                         }
@@ -211,7 +253,11 @@ async function FolderHashCLI(args) {
 
                 fs.writeFileSync(output, JSON.stringify(result, null, 4));
 
-                console.log("\n" + result.hash);
+                console.log((quiet ? "" : "\n") + result.hash);
+
+                if (!quiet) {
+                    console.log(`\ngenerated ${path.parse(output).base}`);
+                }
 
                 break;
             case 'diff':
