@@ -52,10 +52,7 @@ create hash for /publish folder in current directory, do not sort file/folders
 
 create hash for /publish folder in current directory, quiet mode
     
-    fh hash -d ./publish -q
-
-create hash for /publish folder in current directory, quiet mode.
-    fh hash -d publish -q`: ``}${examples == "diff" ? `
+    fh hash -d ./publish -q`: ``}${examples == "diff" ? `
 compare ./dev to ./prod directories, report changes
 
     fh diff -f ./dev -t ./prod
@@ -118,14 +115,14 @@ Usage: fh [cmd] [args] [options]
             'diff'      show help for 'diff' command
             'apply'     show help for 'apply' command
     -v or --version         show app version
-    - q or --quiet          quiet mode. do not produce console messages.
-    -dbm or --debug-mode    debug mode
-    -dp or --deep           deep debug
+    -q or --quiet          quiet mode. do not produce console messages.
     -ed or --exclude-dirs   excluded directories (ignore specified directories)
     -ef or --exclude-files  excluded files (ignore specified files)
     -id or --include-dirs   included directories (do not ignore specified directories)
     -if or --include-files  included files (do not ignore specified files)
     -ns or --no-sort        do not sort files/directories by name
+    -dbm or --debug-mode    debug mode
+    -dp or --deep           deep details
 
 notes:    
     directory structure is created by default.
@@ -267,7 +264,7 @@ async function FolderHashCLI(args) {
                 relTo = initPath("-rt", "--relative-to", false);
                 kind = getArg("-k", "--kind");
 
-                if (debugMode) {
+                if (debugMode && deep) {
                     console.log({
                         from,
                         to,
