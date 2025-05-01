@@ -234,14 +234,14 @@ async function FolderHashCLI(args) {
                             if (state == FolderNavigationEvent.onFolderNavigating) {
                                 console.log(fullPath)
                             } else if (state == FolderNavigationEvent.onFolderIgnored) {
-                                console.log(chalk.yellow(`${fullPath}: ignored`))
+                                console.log(chalk.yellow(`${fullPath}: folder ignored`))
                             }
                         } else {
                             if (deep) {
                                 if (state != FolderNavigationEvent.onFileIgnored) {
                                     console.log(fullPath)
                                 } else {
-                                    console.log(chalk.yellow(`${fullPath}: ignored`))
+                                    console.log(chalk.yellow(`${fullPath}: file ignored`))
                                 }
                             }
                         }
