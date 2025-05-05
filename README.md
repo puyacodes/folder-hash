@@ -1,7 +1,9 @@
 # Puya Folder Hash Utility
 `@puya/fh` is a tool that creates a hash for a directory based on the sub-directories/files located in it.
 
-## Story
+[Related article](https://dev.to/mansooromrani/bring-only-changed-files-to-production-efficient-way-2lho)
+
+# Story
 As developers we all remember the troubles of building/transfering files from a published folder in a dev machine to a folder in a production server.
 
 No matter how sharp we track the files we change during developement so that only copy them to production server not the whole published folder, we are all ended up creating a zip file, transfer it to production server, extract it there in the root of a website and free ourselves.
@@ -12,7 +14,7 @@ The issue resolved, but we always asked ourselves at the end of the day, couldn'
 
 `@puya/fh` was created to help answering exactly this need.
 
-## Description
+# Description
 `@puya/fh` has two main features:
 
 - Generating a `json` file for a folder based on its content.
@@ -36,13 +38,13 @@ With these capabilities at hand, the problem described in `Story` section can be
 
 We can now transfer only the changed files to the production server.
 
-## Install
+# Install
 ```bash
 npm i @puya/fh -g
 ```
 
-## Usage
-### CLI
+# Usage
+## CLI
 
 Base usage:
 ```bash
@@ -78,7 +80,7 @@ Notes:
 
 Using `@puya/fh` in CLI is described in details a little furthur.
 
-### Development
+## Development
 ```javascript
 import { FolderUtil } from "@puya/fh";
 
@@ -87,8 +89,8 @@ const json = FolderUtil.getHash(dir);
 console.log(json.hash);
 ```
 
-## CLI Usage
-### hash
+# CLI Usage
+## hash
 
 Args:
 - `-d` or `--dir`: path of directory for which hash should be generated (could be an absolute or relative path).
@@ -119,7 +121,7 @@ example 5: create hash for `/publish` folder in current directory, quiet mode.
 fh hash -d ./publish -q
 ```
 
-### diff
+## diff
 Args:
 - `-f` or `--from`: (relative/absolute) path of `from` or `source` folder (the folder we are comparing to) or (relative/absolute) path of its json.
 - `-t` or `--to`: (relative/absolute) path of `to` or `destination` folder (the folder we are comparing) or (relative/absolute) path of its json.
@@ -162,7 +164,7 @@ example 6: compare `./dev` to `prod.json`, generate cmd batch file named `ch2025
 fh diff -f ./dev -t prod.json -rt ./publish -k cmd -o ch20250512.bat
 ```
 
-### apply
+## apply
 Args:
 arguments are the same as those used in `diff` command.
 
@@ -176,7 +178,12 @@ example 2: compare ./dev to prod.json, copy into -rt
     fh apply -f ./dev -t ./prod -rt ./publish
 ```
 
-## Included/Excluded files/folders
+example 3: create zip archive out of changes
+```bash
+    fh apply -f ./dev -t ./prod -c
+```
+
+# Included/Excluded files/folders
 There are a default list of files and folders that `@puya/fh` ignores them by default.
 
 default excluded folders
@@ -210,20 +217,3 @@ Excluded files:
 
 These lists can be customized through cli arguments.
 
-Copy new changeset into the container:
-	docker cp changeset.zip my_app:/app/
-
-Extract new changeset inside the container
-	docker exec container_name unzip /app/changeset.zip -d /app/
-
-Run @puya/fh Inside the Container
-	docker exec container_name puya-fh generate /app/changes.json /app/
-
-Copy the JSON File to the Host
-	docker cp container_name:/app/changes.json ./changes.json
-
-
-Compare the JSON with the New Version of the App
-	puya-fh generate ./new_version.json ./new_version_folder/
-
-	puya-fh compare ./changes.json ./new_version.json
