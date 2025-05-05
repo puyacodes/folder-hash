@@ -26,13 +26,10 @@ class FolderNavigator {
             this.config.excludeDirs = this.config.excludeDirs.split(",").filter(isSomeString);
         }
 
-        if (isSomeString(this.config.includeDirs) && this.config.excludeDirs.length) {
-            this.config.includeDirs.split(",").forEach(dir => {
-                const index = this.config.excludeDirs.findIndex(x => x.toLowerCase() == dir.toLowerCase());
-                if (index >= 0) {
-                    this.config.excludeDirs.splice(index, 1);
-                }
-            })
+        if (!isString(this.config.includeDirs)) {
+            this.config.includeDirs = []
+        } else {
+            this.config.includeDirs = this.config.includeDirs.split(",").filter(isSomeString);
         }
 
         if (!isString(this.config.excludeFiles)) {
@@ -46,6 +43,25 @@ class FolderNavigator {
         } else {
             this.config.includeFiles = this.config.includeFiles.split(",").filter(isSomeString);
         }
+    }
+    _isExcludedDir(dir, relDir) {
+        let result = false;
+
+        if (this.config.excludeDirs.length) {
+            if (this.config.excludeDirs.contains(dir)) {
+                if (this.config.includeDirs.length) {
+                    const _relDir = relDir.replace(/\\/g, "/");
+                    
+                    result = !this.config.includeDirs.contains(dir) &&
+                             !this.config.includeDirs.contains(relDir) &&
+                             !this.config.includeDirs.contains(_relDir)
+                } else {
+                    result = true;
+                }
+            }
+        }
+
+        return result;
     }
     _isExcludedFile(file) {
         let result = false;
@@ -68,12 +84,11 @@ class FolderNavigator {
 
         return result;
     }
-    async _navigate(node, dir, callback, level = 0) {
+    async _navigate(node, dir, callback, level, relPath) {
         if (fs.existsSync(dir)) {
-            const stat = fs.statSync(dir);
-
-            if (stat && stat.isDirectory()) {
+            if (fs.statSync(dir).isDirectory()) {
                 node.name = level == 0 ? "" : path.parse(dir).base;
+                node.path = level == 0 ? "/" : relPath + "/" + node.name;
 
                 let r = await callback({ name: node.name, fullPath: dir, dir: true, level, state: FolderNavigationEvent.onFolderNavigating, node });
 
@@ -90,16 +105,16 @@ class FolderNavigator {
                 }
 
                 for (let i = 0; i < list.length; i++) {
-                    const file = list[i];
+                    const item = list[i];
 
-                    const fullPath = path.join(dir, file);
+                    const fullPath = path.join(dir, item);
                     const stat = fs.statSync(fullPath);
 
                     if (stat && stat.isDirectory()) {
-                        if (this.config.excludeDirs.contains(file)) {
-                            await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onFolderIgnored, node });
+                        if (this._isExcludedDir(item, node.path)) {
+                            await callback({ name: item, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onFolderIgnored, node });
                         } else {
-                            const r = await callback({ name: file, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onSubFolderNavigating, node });
+                            const r = await callback({ name: item, fullPath, dir: true, stat, level, state: FolderNavigationEvent.onSubFolderNavigating, node });
 
                             if (r === undefined || (isBool(r) && r)) {
                                 if (!node.dirs) {
@@ -108,23 +123,23 @@ class FolderNavigator {
 
                                 const subdir = {}
 
-                                await this._navigate(subdir, fullPath, callback, level + 1);
+                                await this._navigate(subdir, fullPath, callback, level + 1, node.path);
 
                                 node.dirs.push(subdir);
                             }
                         }
                     } else {
-                        if (this._isExcludedFile(file)) {
-                            await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileIgnored, node });
+                        if (this._isExcludedFile(item)) {
+                            await callback({ name: item, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileIgnored, node });
                         } else {
-                            const r = await callback({ name: file, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileNavigating, node });
+                            const r = await callback({ name: item, fullPath, dir: false, stat, level, state: FolderNavigationEvent.onFileNavigating, node });
 
                             if (r === undefined || (isBool(r) && r)) {
                                 if (!node.files) {
                                     node.files = []
                                 }
 
-                                node.files.push(file);
+                                node.files.push(item);
                             } else if (r !== undefined && r && !isBool(r)) {
                                 if (!node.files) {
                                     node.files = []
@@ -161,7 +176,7 @@ class FolderNavigator {
             callback = () => { }
         }
 
-        await this._navigate(result, dir, callback);
+        await this._navigate(result, dir, callback, 0, "");
 
         return result;
     }

@@ -1,41 +1,54 @@
-{   
-    "name": "@puya/fh",   
-  "version": "1.0.3", 
-    "main": "dist/index.js",   
-    "bin": {   
-        "fh": "bin/fh"   
-    },   
-    "scripts": {   
-        "cp": "rollup -c rollup.config.dev.js && npm link",   
-        "build": "rollup -c",   
-        "release": "set NEW_VERSION=%npm_config_newVersion% && pre-release.bat && rollup -c && release.bat"   
-    },   
-    "keywords": [   
-        "folder",   
-        "hash",   
-        "md5"   
-    ],   
-    "author": "Puyasoft",   
-    "license": "MIT",   
-    "description": "folder-hash is a cli tool that generates a hash for a folder, based on the files in it.",   
-    "dependencies": {   
-        "@locustjs/base": "^4.4.1",   
-        "@locustjs/exception": "^2.3.0",   
-        "chalk": "^4.1.2",   
-        "crypto": "^1.0.1"   
-    },   
-    "devDependencies": {   
-        "@babel/preset-env": "^7.26.7",   
-        "@rollup/plugin-babel": "^6.0.4",   
-        "@rollup/plugin-commonjs": "^28.0.2",   
-        "@rollup/plugin-json": "^6.1.0",   
-        "@rollup/plugin-node-resolve": "^16.0.0",   
-        "@rollup/plugin-terser": "^0.4.4",   
-        "cp-cli": "^2.0.0",   
-        "esm": "^3.2.25",   
-        "rimraf": "^6.0.1",   
-        "rollup": "^4.34.3",   
-        "rollup-plugin-copy": "^3.5.0",   
-        "rollup-plugin-delete": "^2.1.0"   
-    }   
-}   
+{ 
+    "name": "@puya/fh", 
+  "version": "1.0.4", 
+    "description": "folder-hash is a cli tool that generates a hash for a folder, based on the files in it.", 
+    "main": "dist/index.js", 
+    "bin": { 
+        "fh": "bin/fh" 
+    }, 
+    "scripts": { 
+        "cp": "rollup -c rollup.config.dev.js && npm link", 
+        "build": "rollup -c", 
+        "release": "set NEW_VERSION=%npm_config_newVersion% && pre-release.bat && rollup -c && release.bat" 
+    }, 
+    "repository": { 
+        "type": "git", 
+        "url": "git+https://github.com/puyacodes/folder-hash.git" 
+    }, 
+    "bugs": { 
+        "url": "https://github.com/puyacodes/folder-hash/issues" 
+    }, 
+    "homepage": "https://github.com/puyacodes/folder-hash#readme", 
+    "keywords": [ 
+        "folder", 
+        "hash", 
+        "md5", 
+        "devops", 
+        "folder compare", 
+        "folder changes" 
+    ], 
+    "author": "Puyasoft", 
+    "license": "MIT", 
+    "dependencies": { 
+        "@locustjs/base": "^4.4.1", 
+        "@locustjs/exception": "^2.3.0", 
+        "archiver": "^7.0.1", 
+        "chalk": "^4.1.2", 
+        "crypto": "^1.0.1", 
+        "jalali-moment": "^3.3.11" 
+    }, 
+    "devDependencies": { 
+        "@babel/preset-env": "^7.26.7", 
+        "@rollup/plugin-babel": "^6.0.4", 
+        "@rollup/plugin-commonjs": "^28.0.2", 
+        "@rollup/plugin-json": "^6.1.0", 
+        "@rollup/plugin-node-resolve": "^16.0.0", 
+        "@rollup/plugin-terser": "^0.4.4", 
+        "cp-cli": "^2.0.0", 
+        "esm": "^3.2.25", 
+        "rimraf": "^6.0.1", 
+        "rollup": "^4.34.3", 
+        "rollup-plugin-copy": "^3.5.0", 
+        "rollup-plugin-delete": "^2.1.0" 
+    } 
+} 

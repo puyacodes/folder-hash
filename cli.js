@@ -7,6 +7,7 @@ const { Exception } = require("@locustjs/exception");
 const chalk = require("chalk");
 const os = require('os');
 const readline = require("readline");
+const moment = require("jalali-moment");
 
 const workingDir = process.cwd();
 
@@ -75,14 +76,30 @@ compare ./dev to ./prod directories, generate bash file named ch20250512.sh
 
 compare ./dev to prod.json, generate cmd batch file named ch20250512.bat relative to './publish' dir
 
-    fh diff -f ./dev -t prod.json -rt ./publish -k cmd -o ch20250512.bat`: ``}${examples == "apply" || examples == "all" ? `
+    fh diff -f ./dev -t prod.json -rt ./publish -k cmd -o ch20250512.bat`: ``}${examples == "apply" ? `
 compare ./dev to ./prod directories, apply changes from './dev' into './prod'.
 
     fh apply -f ./dev -t ./prod
 
 compare ./dev to prod.json, copy into -rt
 
-    fh apply -f ./dev -t ./prod -rt ./publish`: ``}`);
+    fh apply -f ./dev -t ./prod -rt ./publish
+
+compare ./dev to prod.json, create a compressed file
+
+    fh apply -f ./dev -t prod.json -c
+
+compare ./dev to prod.json, create a compressed file, use fa locale in output filename
+
+    fh apply -f ./dev -t prod.json -c -l fa
+
+compare ./dev to prod.json, create a compressed file named my-changes.zip
+
+    fh apply -f ./dev -t prod.json -c -o my-changes.zip
+
+compare ./dev to prod.json, create a compressed file with compression level 9
+
+    fh apply -f ./dev -t prod.json -c -cl 9`: ``}`);
     } else {
         console.log(`
 Usage: fh [cmd] [args] [options]
@@ -91,6 +108,7 @@ Usage: fh [cmd] [args] [options]
             args
                 -d or --dir             directory to generate hash for (default = current directory)
                 -o or --output          name of generated output file
+                -io or --ignore-output  ignores generating output
         diff    show differences of two folder hash files or create a batch file
                 based on differences between the two specified directories
             args
@@ -111,9 +129,9 @@ Usage: fh [cmd] [args] [options]
   options:
     -? or --help            help
         args
-            'hash'      show help for 'hash' command
-            'diff'      show help for 'diff' command
-            'apply'     show help for 'apply' command
+            'hash'      show examples for 'hash' command
+            'diff'      show examples for 'diff' command
+            'apply'     show examples for 'apply' command
     -v or --version         show app version
     -q or --quiet          quiet mode. do not produce console messages.
     -ed or --exclude-dirs   excluded directories (ignore specified directories)
@@ -200,13 +218,41 @@ async function FolderHashCLI(args) {
             command = "hash";
         }
 
-        let dir, changes, output, from, to, result, relFrom, relTo, kind;
+        let dir, changes, output, from, to, result, relFrom, relTo, kind, ignoreOutput;
 
         options.excludeDirs = getArg("-ed", "--exclude-dirs");
         options.excludeFiles = getArg("-ef", "--exclude-files");
         options.includeDirs = getArg("-id", "--include-dirs");
         options.includeFiles = getArg("-if", "--include-files");
         options.sort = !(args.includes("-ns") || args.includes("--no-sort"));
+        options.compress = args.includes("-c") || args.includes("--compress")
+        options.compressionLevel = args.includes("-cl") || args.includes("--compress-level")
+        options.quiet = quiet;
+        options.deep = deep;
+
+        const showDetails = args.includes("-sd") || args.includes("--show-details");
+
+        ignoreOutput = args.includes("-io") || args.includes("--ignore-output");
+
+        const onProgress = (silent) => ({ fullPath, dir, state }) => {
+            if (!silent) {
+                if (dir) {
+                    if (state == FolderNavigationEvent.onFolderNavigating) {
+                        console.log(fullPath)
+                    } else if (state == FolderNavigationEvent.onFolderIgnored) {
+                        console.log(chalk.yellow(`${fullPath}: folder ignored`))
+                    }
+                } else {
+                    if (deep) {
+                        if (state != FolderNavigationEvent.onFileIgnored) {
+                            console.log(fullPath)
+                        } else {
+                            console.log(chalk.yellow(`${fullPath}: file ignored`))
+                        }
+                    }
+                }
+            }
+        }
 
         if (debugMode) {
             console.log({ options })
@@ -228,27 +274,11 @@ async function FolderHashCLI(args) {
 
                 output = initOutput(path.parse(dir).base + ".json");
 
-                result = await FolderUtil.getHash(dir, ({ fullPath, dir, state }) => {
-                    if (!quiet) {
-                        if (dir) {
-                            if (state == FolderNavigationEvent.onFolderNavigating) {
-                                console.log(fullPath)
-                            } else if (state == FolderNavigationEvent.onFolderIgnored) {
-                                console.log(chalk.yellow(`${fullPath}: folder ignored`))
-                            }
-                        } else {
-                            if (deep) {
-                                if (state != FolderNavigationEvent.onFileIgnored) {
-                                    console.log(fullPath)
-                                } else {
-                                    console.log(chalk.yellow(`${fullPath}: file ignored`))
-                                }
-                            }
-                        }
-                    }
-                }, options);
+                result = await FolderUtil.getHash(dir, onProgress(quiet), options);
 
-                fs.writeFileSync(output, JSON.stringify(result, null, 4));
+                if (!ignoreOutput) {
+                    fs.writeFileSync(output, JSON.stringify(result, null, 4));
+                }
 
                 console.log((quiet ? "" : "\n") + result.hash);
 
@@ -261,7 +291,21 @@ async function FolderHashCLI(args) {
                 from = initPath("-f", "--from");
                 to = initPath("-t", "--to");
                 relFrom = initPath("-rf", "--relative-from", false);
+
+                if (!isSomeString(relFrom)) {
+                    if (!fs.statSync(from).isFile()) {
+                        relFrom = from;
+                    }
+                }
+
                 relTo = initPath("-rt", "--relative-to", false);
+
+                if (!isSomeString(relTo)) {
+                    if (!fs.statSync(to).isFile()) {
+                        relTo = to;
+                    }
+                }
+
                 kind = getArg("-k", "--kind");
 
                 if (debugMode && deep) {
@@ -306,6 +350,10 @@ async function FolderHashCLI(args) {
                         }
 
                     }
+
+                    if (showDetails) {
+                        options.onFromProgress = options.onToProgress = onProgress(false);
+                    }
                 }
 
                 changes = await FolderUtil.diff(from, to, relFrom, relTo, options);
@@ -317,31 +365,57 @@ async function FolderHashCLI(args) {
                 switch (kind) {
                     case "cmd":
                         output = initOutput("sync.bat");
-                        result = changes.map(x => ({
-                            ...x,
-                            from: x.from.replace(/\//g, "\\"),
-                            to: x.to.replace(/\//g, "\\"),
-                        }))
-                            .map(x => x.dir ? `xcopy "${x.from}${x.all ? "\\*.*" : ""}" "${x.to}" /S/Q/Y/H/I/R`
-                                : `xcopy "${path.parse(x.from).dir}" "${path.parse(x.to).dir}" /T/Q/Y/I
-xcopy "${x.from}${x.all ? "\\*.*" : ""}" "${path.parse(x.to).dir}" /S/Q/Y/H/I/R`)
-                            .join("\n");
-                        result = `@echo off
+                        result = changes
+                            .filter(x => isSomeString(x.from))
+                            .map(x => ({
+                                ...x,
+                                from: x.from.replace(/\//g, "\\"),
+                                to: x.to.replace(/\//g, "\\"),
+                            }))
+                            .map(x => {
+                                if (debugMode) {
+                                    console.log(x)
+                                }
 
+                                if (x.all) {
+                                    return `
+xcopy "${x.from}" "${x.to}" /T/Q/Y/I/R
+xcopy "${x.from}\\*.*" "${x.to}" /S/Q/Y/H/I/R`
+                                }
+
+                                if (x.dir) {
+                                    return `xcopy "${x.from}" "${x.to}" /S/Q/Y/H/I/R`
+                                }
+
+                                return `xcopy "${x.from}" "${path.parse(x.to).dir}" /S/Q/Y/H/I/R`
+                            })
+                            .join("\n");
+
+                        if (result) {
+                            result = `@echo off
+        
 ${result}
 
-${changes.length ? `echo ${changes.length} file(s)/dir(s) copied.` : `echo no changes found.`}
-`;
+${changes.length ? `echo ${changes.length} file(s)/dir(s) copied.` : `.`}
+        `;
+                        }
+
                         break;
                     case "bash":
                         output = initOutput("sync.sh");
-                        result = changes.map(x => `cp "${x.from}${x.all ? "/*" : ""}" "${x.to}" ${x.dir ? "-r" : ""} -f`)
+                        result = changes
+                            .filter(x => isSomeString(x.from))
+                            .map(x => `cp "${x.from}${x.all ? "/*" : ""}" "${x.to}" ${x.dir ? "-r" : ""} -f`)
                             .join("\n");
-                        result = `
+
+                        if (result) {
+                            result = `
 ${result}
 
 ${changes.length ? `echo "${changes.length} file(s)/dir(s) copied."` : `echo "no changes found."`}
-                            `;
+                                `;
+                        }
+
                         break;
                     case "json":
                         output = initOutput("sync.json");
@@ -352,7 +426,7 @@ ${changes.length ? `echo "${changes.length} file(s)/dir(s) copied."` : `echo "no
                         break;
                 }
 
-                if (output) {
+                if (output && result) {
                     fs.writeFileSync(output, result);
                 }
 
@@ -365,7 +439,39 @@ ${changes.length ? `echo "${changes.length} file(s)/dir(s) copied."` : `echo "no
                 from = initPath("-f", "--from");
                 to = initPath("-t", "--to");
                 relFrom = initPath("-rf", "--relative-from", false);
+
+                if (!isSomeString(relFrom)) {
+                    if (!fs.statSync(from).isFile()) {
+                        relFrom = from;
+                    }
+                }
+
                 relTo = initPath("-rt", "--relative-to", false);
+
+                if (!isSomeString(relTo)) {
+                    if (!fs.statSync(to).isFile()) {
+                        relTo = to;
+                    }
+                }
+
+                if (options.compress) {
+                    const locale = getArg("-l", "--locale", "en");
+                    const now = moment().locale(locale).format('YYYYMMDDHHmmss')
+
+                    options.output = initOutput(`changeset-${now}.zip`);
+
+                    relTo = path.parse(options.output).dir;
+                }
+
+                if (debugMode && deep) {
+                    console.log({
+                        from,
+                        to,
+                        relFrom,
+                        relTo,
+                        options
+                    })
+                }
 
                 changes = await FolderUtil.apply(from, to, relFrom, relTo, options);
 

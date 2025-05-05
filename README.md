@@ -24,17 +24,15 @@ The generated json for a given directory can be used to ...
 - produce a report based on the differences between two directories
 - create a batch file to copy missing file/folders
 - copy the changes directly.
+- compress changes into a single zip file
 
 With these capabilities at hand, the problem described in `Story` section can be easily resolved.
 
 1. We generate a json for our application folder in the production server.
 2. Bring the json to our dev machine.
-3. Generate a similar json for the published folder in the dev machine.
-4. Compare the two json files.
-5. Copy changes to another directory.
-6. pack the final directory.
-7. Transfer it to production.
-8. Extract it at the root of our app directory.
+3. Compare the json with our local folder and create a compressed file out of the changes
+6. Transfer the compressed file to production.
+7. Extract it there at the root of our app.
 
 We can now transfer only the changed files to the production server.
 
@@ -211,3 +209,21 @@ Excluded files:
 - sync.sh
 
 These lists can be customized through cli arguments.
+
+Copy new changeset into the container:
+	docker cp changeset.zip my_app:/app/
+
+Extract new changeset inside the container
+	docker exec container_name unzip /app/changeset.zip -d /app/
+
+Run @puya/fh Inside the Container
+	docker exec container_name puya-fh generate /app/changes.json /app/
+
+Copy the JSON File to the Host
+	docker cp container_name:/app/changes.json ./changes.json
+
+
+Compare the JSON with the New Version of the App
+	puya-fh generate ./new_version.json ./new_version_folder/
+
+	puya-fh compare ./changes.json ./new_version.json

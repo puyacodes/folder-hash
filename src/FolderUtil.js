@@ -1,9 +1,11 @@
-import { isSomeString, isString, isFunction, isObject, isSomeArray } from "@locustjs/base";
+import { isSomeString, isString, isFunction, isObject, isSomeArray, isNumeric } from "@locustjs/base";
 import fs from "fs";
 import path from "path";
 import getFileMd5 from "./getFileMD5";
 import getMd5 from "./getMd5";
 import { FolderNavigator, FolderNavigationEvent } from "./FolderNavigator";
+import archiver from "archiver";
+import crypto from 'crypto';
 
 const FolderChangeType = {
     MissingSubDir: 'missing-subdir',
@@ -53,6 +55,23 @@ function copyFileWithDirs(source, destination) {
 
     fs.mkdirSync(dir, { recursive: true }); // Create directory structure
     fs.copyFileSync(source, destination);  // Copy the file
+}
+
+async function zipFolder(sourceFolder, zipFilePath, compressionLevel) {
+    return new Promise((resolve, reject) => {
+        const output = fs.createWriteStream(zipFilePath);
+        const archive = archiver('zip', { zlib: { level: compressionLevel } });
+
+        output.on('close', () => {
+            resolve({ length: archive.pointer() });
+        });
+
+        archive.on('error', err => reject(err));
+
+        archive.pipe(output);
+        archive.directory(sourceFolder, false);
+        archive.finalize();
+    });
 }
 
 class FolderUtil {
@@ -136,6 +155,10 @@ class FolderUtil {
     static async diff(fromDir, toDir, fromRel, toRel, options) {
         let jsonFrom, jsonTo;
 
+        if (!isObject(options)) {
+            options = {}
+        }
+
         if (!isString(fromRel)) {
             fromRel = ".";
         }
@@ -151,7 +174,11 @@ class FolderUtil {
                         throw `Reading 'from' file failed.\n${e}`
                     }
                 } else {
-                    jsonFrom = await FolderUtil.getHash(fromDir, null, options);
+                    if (isFunction(options.onFromProgress)) {
+                        console.log(`navigating 'from' dir: ${toDir}`);
+                    }
+
+                    jsonFrom = await FolderUtil.getHash(fromDir, options.onFromProgress, options);
                 }
             } else {
                 throw `'from' not found`
@@ -175,7 +202,11 @@ class FolderUtil {
 
                     toRel = !isSomeString(toRel) ? path.parse(toDir).dir : toRel;
                 } else {
-                    jsonTo = await FolderUtil.getHash(toDir, null, options);
+                    if (isFunction(options.onToProgress)) {
+                        console.log(`\nnavigating 'to' dir: ${toDir}`);
+                    }
+
+                    jsonTo = await FolderUtil.getHash(toDir, options.onToProgress, options);
                     toRel = !isSomeString(toRel) ? path.parse(toDir).dir : toRel;
                 }
             } else {
@@ -219,6 +250,14 @@ class FolderUtil {
                                 changes.push(change);
                             }
                         }
+                    } else {
+                        for (let subdirFrom of from.dirs) {
+                            const change = { from: `${_relFrom}/${subdirFrom.name}`, to: `${_relTo}/${subdirFrom.name}`, dir: true }
+
+                            options.onChange({ path: change.to, name: subdirFrom.name, type: FolderChangeType.MissingSubDir });
+
+                            changes.push(change);
+                        }
                     }
                 }
 
@@ -259,9 +298,41 @@ class FolderUtil {
         return changes;
     }
     static async apply(fromDir, toDir, relFrom, relTo, options) {
-        const changes = await FolderUtil.diff(fromDir, toDir, relFrom, relTo, options);
+        let _relTo;
+
+        if (!isObject(options)) {
+            options = {}
+        }
+
+        if (options.compress) {
+            _relTo = path.join(relTo, "~" + crypto.randomUUID().substr(0, 8));
+        }
+
+        if (!isNumeric(options.compressionLevel)) {
+            options.compressionLevel = 9;
+        } else {
+            options.compressionLevel = parseInt(options.compressionLevel);
+
+            if (options.compressionLevel < 0) {
+                throw `invalid compression level`
+            } else if (options.compressionLevel > 9) {
+                throw `unsupported compression level (maximum is 9)`
+            }
+        }
+
+        const changes = await FolderUtil.diff(fromDir, toDir, relFrom, options.compress ? _relTo : relTo, options);
+
+        if (options.debugMode) {
+            console.log({ changes })
+        }
+
+        let count = 0;
 
         for (let change of changes) {
+            if (options.debugMode) {
+                console.log('applying ', change)
+            }
+
             if (change.dir) {
                 await copyDirectory(change.from, change.to);
             } else if (change.all) {
@@ -269,6 +340,16 @@ class FolderUtil {
             } else {
                 copyFileWithDirs(change.from, change.to);
             }
+
+            count++;
+        }
+
+        if (options.compress) {
+            if (count) {
+                await zipFolder(_relTo, options.output, options.compressionLevel);
+            }
+
+            fs.rmSync(_relTo, { recursive: true, force: true });
         }
 
         return changes;
